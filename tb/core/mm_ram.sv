@@ -203,9 +203,6 @@ module mm_ram
 
     //random or monitor interrupt request
     logic                          rnd_irq;
-`ifdef VERILATOR
-    assign rnd_irq = 1'b0;
-`endif
     // Sail simple_interrupt_generator platform-register state
     logic [IRQ_WIDTH-1:0]          sig_platform_q;
     logic                          sig_platform_we;
@@ -621,6 +618,13 @@ module mm_ram
                 end else if (data_addr_i == MMADDR_MTIMECMPH) begin
                     select_rdata_d = CLINT;
                     clint_rdata_d  = mtimecmp_q[63:32];
+                end else if (data_addr_i == MMADDR_SIG_VERSION) begin
+                    select_rdata_d = CLINT;
+                    clint_rdata_d  = SIG_VERSION_VAL;
+                end else if (data_addr_i == MMADDR_SIG_PLATFORM) begin
+                    // platform register reads as zeros
+                    select_rdata_d = CLINT;
+                    clint_rdata_d  = '0;
                 end else
                     select_rdata_d = ERR;
 
@@ -711,15 +715,19 @@ module mm_ram
     assign mtime_o    = mtime_q;
 
     // CLINT machine timer: free-running mtime; MTIP via mtime/mtimecmp compare.
-    // A software write to mtime takes priority over the increment this cycle.
     // mtimecmp resets to all-ones so MTIP stays low until a test arms it.
     always_ff @(posedge clk_i, negedge rst_ni) begin: clint_timer
         if (~rst_ni) begin
             mtime_q    <= '0;
             mtimecmp_q <= '1;
         end else begin
-            mtime_q[31:0]  <= mtime_we_lo ? clint_wdata : mtime_next[31:0];
-            mtime_q[63:32] <= mtime_we_hi ? clint_wdata : mtime_next[63:32];
+            // writes suppress the increment (no carry into the written half)
+            if (mtime_we_lo || mtime_we_hi) begin
+                if (mtime_we_lo) mtime_q[31:0]  <= clint_wdata;
+                if (mtime_we_hi) mtime_q[63:32] <= clint_wdata;
+            end else begin
+                mtime_q <= mtime_next;
+            end
             if (mtimecmp_we_lo) mtimecmp_q[31:0]  <= clint_wdata;
             if (mtimecmp_we_hi) mtimecmp_q[63:32] <= clint_wdata;
         end
@@ -1107,6 +1115,9 @@ module mm_ram
       .irq_pc_id_i       ( pc_core_id_i                                 ),
       .irq_pc_trig_i     ( rnd_stall_regs[13]                           )
     );
+`else
+    // random interrupt generator not available under Verilator
+    assign rnd_irq = 1'b0;
 `endif
 
 endmodule // ram
